@@ -1,0 +1,12 @@
+# depslib dependency file v1.0
+1601936585 source:/home/timur/CodeBlocks/Microsha/main.cpp
+	<iostream>
+	<string>
+	<vector>
+	<sstream>
+	<unistd.h>
+	<errno.h>
+	<fcntl.h>
+	<sys/types.h>
+	<sys/wait.h>
+
