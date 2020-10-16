@@ -7,20 +7,24 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <cstdlib>
+#include <stdio.h>
+#include <sys/resource.h>
+#include <sys/time.h>
 
 using namespace std;
 
-void pwd()
+void pwd()//Имя текущей директории
 {
     string s(get_current_dir_name());
     cout << s << '\n';
 }
 
-void cd(string path)
+void cd(string path)//Процедура смены рабочей директории
 {
-    if (path == "0")
+    if (path == "")
     {
-        string s = "/home/timur";
+        string s = getenv("HOME");
         chdir(s.c_str());
     }
     else
@@ -32,55 +36,52 @@ void cd(string path)
     }
 }
 
-void time()
-{
-}
-
 int main()
 {
-    while(1)
+    while(1)//Главный цикл работы программы
     {
         string cur(get_current_dir_name());
-        cout << cur <<  " > ";
+        if (geteuid() == 0)
+            cout << cur <<  "~$ ";
+        else
+            cout << cur <<  "~> ";
         string input;
         getline(cin, input);
         vector <string> split;
         string word;
         stringstream s(input);
         while (s >> word) split.push_back(word);
-        /*for(auto i = 0; i < split.size(); i++){
-            cout << split[i] << '\n';
-        }*/
-        if(split[0] == "cd")
+        if(split[0] == "cd")//Уходим в другое место
         {
             if (split.size() == 1)
             {
-                cd("0");
+                cd("");
             }
             else
             {
                 cd(split[1]);
             }
         }
-        else if(split[0] == "pwd")
+        else if(split[0] == "pwd")//Где мы?
         {
             pwd();
         }
-        else if(split[0] == "time")
-        {
-            //time(...);
-        }
         else
         {
-            //execvp
+            size_t num = 0;
+            unsigned long long real_time;
+            if(split[0] == "time"){
+                num = 1;
+                real_time =  clock();
+            }
             if (fork() != 0)   //parent
             {
                 wait(0);
             }
-            else   //child
+            else   //children
             {
                 vector<char *> v;
-                for (size_t i = 0; i < split.size(); i++)
+                for (size_t i = num; i < split.size(); i++)
                 {
                     v.push_back((char *)split[i].c_str());
                 }
@@ -88,8 +89,16 @@ int main()
                 execvp(v[0], &v[0]);
                 perror(v[0]);
             }
+            if(num)//Выводим время работы дочерних процессов
+            {
+                real_time = clock() - real_time;
+                struct rusage usage;
+                getrusage(RUSAGE_CHILDREN, &usage);
+                cout << "CPU time:\n" << ((double) real_time)/1000 << " sec real\n"
+                << usage.ru_utime.tv_sec << '.' << usage.ru_utime.tv_usec << " sec user\n"
+                <<  usage.ru_stime.tv_sec << '.' << usage.ru_stime.tv_usec << " sec system\n";
+            }
         }
-
     }
     return 0;
 }
