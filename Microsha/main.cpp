@@ -11,6 +11,20 @@
 #include <stdio.h>
 #include <sys/resource.h>
 #include <sys/time.h>
+#include <time.h>
+#include <algorithm>
+#include <dirent.h>
+#include <limits.h>
+#include <linux/rtc.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/prctl.h>
+#include <cassert>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
 
 using namespace std;
 
@@ -47,56 +61,155 @@ int main()
             cout << cur <<  "~> ";
         string input;
         getline(cin, input);
-        vector <string> split;
-        string word;
-        stringstream s(input);
-        while (s >> word) split.push_back(word);
-        if(split[0] == "cd")//Уходим в другое место
+        if(input.size() == 0)
+            continue;
+        //Нарезаем строчку на вектор вектор строк сначала по | затем по пробелу
+        vector<string> split;
+        string delim(" | ");
+        size_t prev = 0;
+        size_t next;
+        size_t delta = delim.length();
+        while((next = input.find(delim, prev)) != string::npos )
         {
-            if (split.size() == 1)
+            string tmp = input.substr(prev, next-prev);
+            split.push_back( input.substr(prev, next-prev));
+            prev = next + delta;
+        }
+        string tmp = input.substr(prev);
+        split.push_back(input.substr(prev));
+        vector<vector <string>> supersplit;
+        supersplit.resize(split.size());
+        for(int i = 0; i < split.size(); i++)
+        {
+            string word;
+            stringstream s(split[i]);
+            while (s >> word) supersplit[i].push_back(word);
+        }
+        //Закончили нарезку
+
+        if(supersplit[0][0] == "cd")//Уходим в другое место
+        {
+            if (supersplit[0].size() == 1)
             {
                 cd("");
             }
             else
             {
-                cd(split[1]);
+                cd(supersplit[0][1]);
             }
         }
-        else if(split[0] == "pwd")//Где мы?
+        else if(supersplit[0][0] == "pwd")//Где мы?
         {
             pwd();
         }
-        else
+        else//Запуск без конвеера
         {
             size_t num = 0;
-            unsigned long long real_time;
-            if(split[0] == "time"){
+            struct timeval start,stop;
+            if(supersplit[0][0] == "time")
+            {
                 num = 1;
-                real_time =  clock();
+                gettimeofday(&start,NULL);
             }
-            if (fork() != 0)   //parent
+            if(supersplit.size() == 1)
             {
-                wait(0);
-            }
-            else   //children
-            {
-                vector<char *> v;
-                for (size_t i = num; i < split.size(); i++)
+                pid_t ch = fork();
+                if (ch != 0)   //parent
                 {
-                    v.push_back((char *)split[i].c_str());
+                    wait(0);
                 }
-                v.push_back(NULL);
-                execvp(v[0], &v[0]);
-                perror(v[0]);
+                else    //children
+                {
+                    vector<char *> v;
+                    for (size_t i = num; i < supersplit[0].size(); i++)
+                    {
+                        v.push_back((char *)supersplit[0][i].c_str());
+                    }
+                    v.push_back(NULL);
+                    prctl(PR_SET_PDEATHSIG, SIGINT);
+                    execvp(v[0], &v[0]);
+                    perror(v[0]);
+                    exit(1);
+                }
+            }
+            else//Запуск с конвеером
+            {
+                int orig_stdin = dup(STDIN_FILENO); // изначальные fd
+                int orig_stdout = dup(STDOUT_FILENO);
+                int pipes[supersplit.size()-1][2];
+                int cur_fd = 0;
+                int prev_fd = -1;
+                for(int i = 0; i < supersplit.size()-1; i++)
+                    if(pipe2(pipes[i], O_CLOEXEC))
+                        perror("pipe\n");
+                for (int i = 0; i < supersplit.size(); i++)
+                {
+                    pid_t pid = fork();
+                    if (!pid)
+                    {
+                        //Для первой команды нужно переключить stdout
+                        if (!i)
+                        {
+                            dup2(pipes[0][1], STDOUT_FILENO);
+                            close(pipes[0][0]);
+                        }
+                        //Для непервой и непоследней команды нужно переключить stdin и stdout
+                        if (i && i < supersplit.size() - 1)
+                        {
+                            dup2(pipes[prev_fd][0], STDIN_FILENO);
+                            close(pipes[prev_fd][1]);
+                            dup2(pipes[cur_fd][1], STDOUT_FILENO);
+                            close(pipes[cur_fd][0]);
+                        }
+                        //Для последней команды нужно переключить stdin
+                        if(i == supersplit.size() - 1)
+                        {
+                            dup2(pipes[prev_fd][0], STDIN_FILENO);
+                            close(pipes[prev_fd][1]);
+                        }
+                        //Сформировать запуск
+                        vector<char *> v;
+                        for (size_t j = 0; j < supersplit[i].size(); j++)
+                        {
+                            v.push_back((char *)supersplit[i][j].c_str());
+                        }
+                        v.push_back(NULL);
+                        prctl(PR_SET_PDEATHSIG, SIGINT);
+                        execvp(v[0], &v[0]);
+                        perror(v[0]);
+                        exit(1);
+                    }//
+                    else
+                    {
+                        if(i == supersplit.size() - 1)
+                        {
+                            for(int j = 0; j < supersplit.size() - 1; j++)
+                            {
+                                close(pipes[j][0]);
+                                close(pipes[j][1]);
+                            }
+                            for(int j = 0; j < supersplit.size() - 1; j++)
+                                wait(0);
+                        }
+                    }
+                    cur_fd++;
+                    prev_fd++;
+                }
+            dup2(orig_stdin, STDIN_FILENO);
+            dup2(orig_stdout, STDOUT_FILENO);
+            close(orig_stdin);
+            close(orig_stdout);
             }
             if(num)//Выводим время работы дочерних процессов
             {
-                real_time = clock() - real_time;
+                //stop = time(NULL);
+                //real_time = difftime(stop,start);
+                gettimeofday(&stop,NULL);
                 struct rusage usage;
                 getrusage(RUSAGE_CHILDREN, &usage);
-                cout << "CPU time:\n" << ((double) real_time)/1000 << " sec real\n"
-                << usage.ru_utime.tv_sec << '.' << usage.ru_utime.tv_usec << " sec user\n"
-                <<  usage.ru_stime.tv_sec << '.' << usage.ru_stime.tv_usec << " sec system\n";
+                cout << "\nreal     " << stop.tv_sec - start.tv_sec << '.' << (stop.tv_usec - start.tv_usec)/1000 << "s\nuser     "
+                     << usage.ru_utime.tv_sec << '.' << (usage.ru_utime.tv_usec)/1000 << "s\nsystem   "
+                     <<  usage.ru_stime.tv_sec << '.' << (usage.ru_stime.tv_usec)/1000 << "s\n";
             }
         }
     }

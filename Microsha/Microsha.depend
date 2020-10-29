@@ -1,5 +1,5 @@
 # depslib dependency file v1.0
-1601936585 source:/home/timur/CodeBlocks/Microsha/main.cpp
+1604010856 source:/home/timur/CodeBlocks/Microsha/main.cpp
 	<iostream>
 	<string>
 	<vector>
@@ -9,4 +9,22 @@
 	<fcntl.h>
 	<sys/types.h>
 	<sys/wait.h>
+	<cstdlib>
+	<stdio.h>
+	<sys/resource.h>
+	<sys/time.h>
+	<time.h>
+	<algorithm>
+	<dirent.h>
+	<limits.h>
+	<linux/rtc.h>
+	<stdlib.h>
+	<string.h>
+	<sys/stat.h>
+	<sys/syscall.h>
+	<sys/prctl.h>
+	<cassert>
+	<cstring>
+	<fstream>
+	<iomanip>
 
