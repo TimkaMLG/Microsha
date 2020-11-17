@@ -25,6 +25,7 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <cstdlib>
 
 using namespace std;
 
@@ -50,10 +51,21 @@ void cd(string path)//Процедура смены рабочей директ�
     }
 }
 
+sig_atomic_t flag = 0;
+void sighandler(int signal){
+    if(signal == 2)
+    {
+        flag = 1;
+    }
+}
+
 int main()
 {
     while(1)//Главный цикл работы программы
     {
+        flag = 0;
+        signal(SIGINT, sighandler);
+        if(flag) continue;
         string cur(get_current_dir_name());
         if (geteuid() == 0)
             cout << cur <<  "~$ ";
@@ -63,6 +75,7 @@ int main()
         getline(cin, input);
         if(input.size() == 0)
             continue;
+        //cout << '\n';
         //Нарезаем строчку на вектор вектор строк сначала по | затем по пробелу
         vector<string> split;
         string delim(" | ");
@@ -79,7 +92,7 @@ int main()
         split.push_back(input.substr(prev));
         vector<vector <string>> supersplit;
         supersplit.resize(split.size());
-        for(int i = 0; i < split.size(); i++)
+        for(size_t i = 0; i < split.size(); i++)
         {
             string word;
             stringstream s(split[i]);
@@ -102,6 +115,23 @@ int main()
         {
             pwd();
         }
+        else if(supersplit[0][0] == "echo")//Вывести введенное
+        {
+            for(size_t i = 1; i < supersplit[0].size(); i++){
+                cout << supersplit[0][i] << ' ';
+            }
+            cout << '\n';
+        }
+        else if(supersplit[0][0] == "set")//настройка
+        {
+            //char * Ptr = getenv("LANG");
+            //cout << "Lang = " << Ptr << '\n';
+            extern char ** environ;
+            for (int i = 0; environ[i] != NULL; i++)
+            {
+                cout << environ[i] << '\n';
+            }
+        }
         else//Запуск без конвеера
         {
             size_t num = 0;
@@ -113,6 +143,36 @@ int main()
             }
             if(supersplit.size() == 1)
             {
+                //Переключаем
+                int orig_stdin = dup(STDIN_FILENO); // изначальные fd
+                int orig_stdout = dup(STDOUT_FILENO);
+                size_t size_supasplit = supersplit[0].size();
+                auto less_than = find(supersplit[0].begin(),supersplit[0].end(), "<");
+                auto greater_than = find(supersplit[0].begin(),supersplit[0].end(), ">");
+                if(less_than != supersplit[0].end())
+                {
+                    string less_file = *(less_than + 1);
+                    int fd_in = open(less_file.c_str(), O_RDONLY);
+                    if(fd_in == -1)
+                    {
+                        perror("input failed");
+                        continue;
+                    }
+                    dup2(fd_in, STDIN_FILENO);
+                    size_supasplit = distance(supersplit[0].begin(), less_than);
+                }
+                if(greater_than != supersplit[0].end())
+                {
+                    string greater_file = *(greater_than + 1);
+                    int fd_out = open(greater_file.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0644);
+                    if(fd_out == -1)
+                    {
+                        perror("output failed");
+                        continue;
+                    }
+                    dup2(fd_out, STDOUT_FILENO);
+                    size_supasplit = distance(supersplit[0].begin(), greater_than);
+                }
                 pid_t ch = fork();
                 if (ch != 0)   //parent
                 {
@@ -121,7 +181,7 @@ int main()
                 else    //children
                 {
                     vector<char *> v;
-                    for (size_t i = num; i < supersplit[0].size(); i++)
+                    for (size_t i = num; i < size_supasplit; i++)
                     {
                         v.push_back((char *)supersplit[0][i].c_str());
                     }
@@ -131,6 +191,15 @@ int main()
                     perror(v[0]);
                     exit(1);
                 }
+                if(less_than != supersplit[0].end()){
+                    dup2(orig_stdin, STDIN_FILENO);
+                    close(orig_stdin);
+
+                }
+                if(greater_than != supersplit[0].end()){
+                    dup2(orig_stdout, STDOUT_FILENO);
+                    close(orig_stdout);
+                }
             }
             else//Запуск с конвеером
             {
@@ -139,11 +208,38 @@ int main()
                 int pipes[supersplit.size()-1][2];
                 int cur_fd = 0;
                 int prev_fd = -1;
-                for(int i = 0; i < supersplit.size()-1; i++)
+                for(size_t i = 0; i < supersplit.size()-1; i++)
                     if(pipe2(pipes[i], O_CLOEXEC))
                         perror("pipe\n");
-                for (int i = 0; i < supersplit.size(); i++)
+                for (size_t i = 0; i < supersplit.size(); i++)
                 {
+                    size_t size_supasplit = supersplit[i].size();
+                    auto less_than = find(supersplit[i].begin(),supersplit[i].end(), "<");
+                    auto greater_than = find(supersplit[i].begin(),supersplit[i].end(), ">");
+                    if(less_than != supersplit[i].end())
+                    {
+                        string less_file = *(less_than + 1);
+                        int fd_in = open(less_file.c_str(), O_RDONLY);
+                        if(fd_in == -1)
+                        {
+                            perror("input failed");
+                            continue;
+                        }
+                        dup2(fd_in, STDIN_FILENO);
+                        size_supasplit = distance(supersplit[i].begin(), less_than);
+                    }
+                    if(greater_than != supersplit[i].end())
+                    {
+                        string greater_file = *(greater_than + 1);
+                        int fd_out = open(greater_file.c_str(), O_WRONLY | O_TRUNC | O_CREAT, 0644);
+                        if(fd_out == -1)
+                        {
+                            perror("output failed");
+                            continue;
+                        }
+                        dup2(fd_out, STDOUT_FILENO);
+                        size_supasplit = distance(supersplit[i].begin(), greater_than);
+                    }
                     pid_t pid = fork();
                     if (!pid)
                     {
@@ -169,7 +265,7 @@ int main()
                         }
                         //Сформировать запуск
                         vector<char *> v;
-                        for (size_t j = 0; j < supersplit[i].size(); j++)
+                        for (size_t j = 0; j < size_supasplit; j++)
                         {
                             v.push_back((char *)supersplit[i][j].c_str());
                         }
@@ -183,12 +279,12 @@ int main()
                     {
                         if(i == supersplit.size() - 1)
                         {
-                            for(int j = 0; j < supersplit.size() - 1; j++)
+                            for(size_t j = 0; j < supersplit.size() - 1; j++)
                             {
                                 close(pipes[j][0]);
                                 close(pipes[j][1]);
                             }
-                            for(int j = 0; j < supersplit.size() - 1; j++)
+                            for(size_t j = 0; j < supersplit.size() - 1; j++)
                                 wait(0);
                         }
                     }
